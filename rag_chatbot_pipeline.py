@@ -1,6 +1,7 @@
 import os
 import pypdf
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from sentence_transformers import CrossEncoder
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -10,12 +11,7 @@ from langchain_core.documents import Document
 
 class ClassBasedRAGChatbot:
     """
-    A unified, class-based RAG chatbot that implements the complete RAG pipeline:
-    1. Ingestion: PDF parsing (pypdf) and chunking (RecursiveCharacterTextSplitter)
-    2. Embeddings: sentence-transformers/all-MiniLM-L6-v2 via HuggingFaceEmbeddings
-    3. Storage: Persistent Chroma Vector DB (with duplicate prevention)
-    4. Two-Stage Retrieval: Initial similarity search followed by CrossEncoder reranking
-    5. Generation: Gemini API response generation grounded on retrieved context
+    A unified, class-based RAG chatbot using the updated google-genai SDK.
     """
 
     def __init__(
@@ -26,15 +22,13 @@ class ClassBasedRAGChatbot:
         llm_model="gemini-2.5-flash"
     ):
         self.db_dir = db_dir
+        self.llm_model = llm_model
 
-        # 1. Initialize Gemini API key
+        # 1. Initialize Gemini client (new SDK)
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
-            raise ValueError(
-                "GEMINI_API_KEY environment variable is not set. Please set it before initializing."
-            )
-        genai.configure(api_key=api_key)
-        self.llm = genai.GenerativeModel(llm_model)
+            raise ValueError("GEMINI_API_KEY environment variable is not set.")
+        self.client = genai.Client(api_key=api_key)
 
         # 2. Setup Embeddings
         print(f"Loading embedding model: {embedding_model}...")
@@ -52,11 +46,11 @@ class ClassBasedRAGChatbot:
             keep_separator=True
         )
 
-        # 4. Setup Reranker (Cross-Encoder)
+        # 4. Setup Reranker
         print(f"Loading reranker model: {reranker_model}...")
         self.reranker = CrossEncoder(reranker_model, device="cpu")
 
-        # 5. Initialize/Load Vector Store (Chroma)
+        # 5. Initialize Vector Store
         print(f"Connecting to Chroma DB at: {self.db_dir}...")
         self.vector_store = Chroma(
             collection_name="rag_collection",
@@ -66,10 +60,6 @@ class ClassBasedRAGChatbot:
         print("[OK] RAG Chatbot initialized successfully.")
 
     def ingest_pdf(self, pdf_path):
-        """
-        Parses a PDF file, splits it into chunks, calculates embeddings, and updates
-        the vector database. Includes duplicate prevention.
-        """
         if not os.path.exists(pdf_path):
             raise FileNotFoundError(f"PDF file not found at: {pdf_path}")
 
@@ -89,34 +79,26 @@ class ClassBasedRAGChatbot:
             for chunk_idx, chunk in enumerate(chunks):
                 doc = Document(
                     page_content=chunk,
-                    metadata={
-                        "source": filename,
-                        "page": page_idx + 1
-                    }
+                    metadata={"source": filename, "page": page_idx + 1}
                 )
                 documents.append(doc)
                 ids.append(f"{filename}_p{page_idx + 1}_c{chunk_idx}")
 
         if not documents:
-            print("[Ingest] Warning: No text could be extracted from this document.")
+            print("[Ingest] Warning: No text could be extracted.")
             return
 
         print(f"[Ingest] Created {len(documents)} chunks from {filename}.")
 
-        # Prevent duplicates
         existing = self.vector_store.get(where={"source": filename})
         if existing and existing.get("ids"):
-            old_ids = existing["ids"]
-            self.vector_store.delete(ids=old_ids)
-            print(f"[Ingest] Removed {len(old_ids)} existing chunks for {filename}.")
+            self.vector_store.delete(ids=existing["ids"])
+            print(f"[Ingest] Removed {len(existing['ids'])} existing chunks.")
 
         self.vector_store.add_documents(documents=documents, ids=ids)
-        print(f"[Ingest] Successfully ingested & indexed '{filename}'.")
+        print(f"[Ingest] Successfully ingested '{filename}'.")
 
     def retrieve_and_rerank(self, query, initial_k=15, final_k=3, filter_dict=None):
-        """
-        Two-stage retrieval: embedding similarity search + CrossEncoder reranking.
-        """
         print(f"\n[Search] Performing initial semantic search (k={initial_k})...")
         search_kwargs = {"k": initial_k}
         if filter_dict:
@@ -124,23 +106,18 @@ class ClassBasedRAGChatbot:
 
         candidates = self.vector_store.similarity_search(query, **search_kwargs)
         if not candidates:
-            print("[Search] No candidate documents retrieved.")
             return []
 
-        print(f"[Search] Reranking {len(candidates)} candidates using Cross-Encoder...")
+        print(f"[Search] Reranking {len(candidates)} candidates...")
         pairs = [(query, doc.page_content) for doc in candidates]
         scores = self.reranker.predict(pairs)
 
-        candidate_scores = list(zip(candidates, scores))
-        candidate_scores.sort(key=lambda x: x[1], reverse=True)
+        candidate_scores = sorted(zip(candidates, scores), key=lambda x: x[1], reverse=True)
         top_results = candidate_scores[:final_k]
 
         return [{"document": doc, "score": float(score)} for doc, score in top_results]
 
     def generate_answer(self, question, context_results):
-        """
-        Constructs grounded context and calls the Gemini LLM.
-        """
         if not context_results:
             return "The vector database does not contain any relevant context to answer this question."
 
@@ -171,15 +148,19 @@ Instructions:
 4. Keep your answer clear, factual, and concise. Add page citations where applicable.
 """
         try:
-            response = self.llm.generate_content(prompt)
+            response = self.client.models.generate_content(
+                model=self.llm_model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    max_output_tokens=1500,
+                    temperature=0.1
+                )
+            )
             return response.text
         except Exception as e:
             return f"An error occurred while generating the answer: {e}"
 
     def ask(self, question, initial_k=15, final_k=3, filter_dict=None):
-        """
-        Unified endpoint: retrieval → reranking → generation.
-        """
         context_results = self.retrieve_and_rerank(
             query=question,
             initial_k=initial_k,
@@ -188,47 +169,3 @@ Instructions:
         )
         answer = self.generate_answer(question, context_results)
         return {"answer": answer, "sources": context_results}
-
-
-# --- Demonstration Runner ---
-if __name__ == "__main__":
-    print("=== Starting Mercedes-Benz RAG Chatbot Runner ===")
-
-    if "GEMINI_API_KEY" not in os.environ:
-        try:
-            import tomllib
-            SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-            secrets_path = os.path.join(SCRIPT_DIR, ".streamlit", "secrets.toml")
-            if os.path.exists(secrets_path):
-                with open(secrets_path, "rb") as f:
-                    secrets = tomllib.load(f)
-                    if "GEMINI_API_KEY" in secrets:
-                        os.environ["GEMINI_API_KEY"] = secrets["GEMINI_API_KEY"]
-        except Exception:
-            pass
-
-    if "GEMINI_API_KEY" not in os.environ:
-        print("WARNING: GEMINI_API_KEY not found. Set it before running.")
-        exit(1)
-
-    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-    chatbot = ClassBasedRAGChatbot(
-        db_dir=os.path.join(SCRIPT_DIR, "test_rag_db"),
-        llm_model="gemini-2.5-flash"
-    )
-
-    test_pdf_path = os.path.join(SCRIPT_DIR, "Mercedes-Benz-Group-Report-2024-en.pdf")
-
-    if os.path.exists(test_pdf_path):
-        chatbot.ingest_pdf(test_pdf_path)
-        test_query = "What were Mercedes-Benz's key financial results in 2024?"
-        print(f"\n[Test Query] Asking: '{test_query}'")
-        result = chatbot.ask(test_query, initial_k=5, final_k=2)
-        print("\n=== Bot Answer ===")
-        print(result["answer"])
-        print("\n=== References used ===")
-        for i, item in enumerate(result["sources"], 1):
-            doc = item["document"]
-            print(f"{i}. [Page {doc.metadata.get('page')}] (Score: {item['score']:.4f}): {doc.page_content[:150]}...")
-    else:
-        print(f"\nNote: Test PDF not found at {test_pdf_path}. Skipping ingestion demo.")
