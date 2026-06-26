@@ -1,0 +1,9 @@
+streamlit
+pypdf
+google-generativeai
+sentence-transformers
+langchain
+langchain-huggingface
+langchain-chroma
+chromadb
+torch
