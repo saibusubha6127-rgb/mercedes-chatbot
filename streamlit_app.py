@@ -1,17 +1,5 @@
 
 import os
-import requests
-
-PDF_PATH = "Mercedes-Benz-Group-Report-2024-en.pdf"
-PDF_URL = "https://raw.githubusercontent.com/saibusubha6127-rgb/mercedes-chatbot/main/Mercedes-Benz-Gr..."  # full filename
-
-if not os.path.exists(PDF_PATH):
-    with st.spinner("Downloading report..."):
-        r = requests.get(PDF_URL, stream=True)
-        with open(PDF_PATH, "wb") as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
-
 import streamlit as st
 from rag_chatbot_pipeline import ClassBasedRAGChatbot
 
