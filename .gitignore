@@ -10,6 +10,7 @@ venv/
 
 # Local vector database
 rag_db/
+rag_db_*/
 chroma_db/
 
 # IDE and cache
