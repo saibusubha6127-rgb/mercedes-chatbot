@@ -19,7 +19,7 @@ class ClassBasedRAGChatbot:
         db_dir="./rag_db",
         embedding_model="sentence-transformers/all-MiniLM-L6-v2",
         reranker_model="ms-marco-MiniLM-L-12-v2",
-        llm_model="gemini-2.5-flash"
+        llm_model="gemini-3.6-flash"
     ):
         self.db_dir = db_dir
         self.llm_model = llm_model
