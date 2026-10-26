@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Secrets and environment variables
+.env
+.streamlit/secrets.toml
+
+# Local vector database
+rag_db/
+chroma_db/
+
+# IDE and cache
+.idea/
+.cache/
