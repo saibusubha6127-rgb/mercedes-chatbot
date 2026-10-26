@@ -233,7 +233,7 @@ DB_DIR = os.path.join(SCRIPT_DIR, f"rag_db_{PDF_BASE_NAME}")
 # ── Cached chatbot ─────────────────────────────────────────────────────────────
 @st.cache_resource
 def get_chatbot():
-    bot = ClassBasedRAGChatbot(db_dir=DB_DIR, llm_model="gemini-2.5-flash")
+    bot = ClassBasedRAGChatbot(db_dir=DB_DIR, llm_model="gemini-3.6-flash")
     if os.path.exists(HARDCODED_PDF):
         bot.ingest_pdf(HARDCODED_PDF)
         st.success("✅ Report ingested successfully.")
